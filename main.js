@@ -182,13 +182,45 @@ window.addEventListener("wheel", (e) => {
     
     e.preventDefault(); 
 }, { passive: false });
-function setHardFocus(showElements, hideElements) {
-    if(showElements) {
-        (Array.isArray(showElements) ? showElements : [showElements]).forEach(el => gsap.set(el, { autoAlpha: 1 }));
-    }
-    if(hideElements) {
-        (Array.isArray(hideElements) ? hideElements : [hideElements]).forEach(el => gsap.set(el, { autoAlpha: 0 }));
-    }
+// ─── LOADING SCREEN CONTROLLER ───────────────────────────────────────────────
+const ecLoader     = document.getElementById('ec-loader');
+const ecLoaderFill = document.getElementById('ec-loader-fill');
+let   _loadedCount = 0;
+const _TOTAL_VIDS  = 4;
+const _firedSet    = new Set();
+
+function _onVidReady(idx) {
+    if (_firedSet.has(idx)) return;
+    _firedSet.add(idx);
+    _loadedCount++;
+    const pct = (_loadedCount / _TOTAL_VIDS) * 100;
+    if (ecLoaderFill) ecLoaderFill.style.width = pct + '%';
+    if (_loadedCount >= _TOTAL_VIDS) _dismissLoader();
+}
+
+function _dismissLoader() {
+    if (!ecLoader || ecLoader.style.display === 'none') return;
+    gsap.to(ecLoader, {
+        opacity: 0, duration: 0.9, ease: 'power2.inOut',
+        onComplete: () => { ecLoader.style.display = 'none'; }
+    });
+}
+
+// Wire up after DOM elements are assigned (called below after vid refs exist)
+function _initLoader() {
+    const vids = [vid1, vid2, vid1Rev, vid2Rev];
+    vids.forEach((v, i) => {
+        if (!v) { _onVidReady(i); return; }
+        if (v.readyState >= 3) {
+            _onVidReady(i);
+        } else {
+            v.addEventListener('canplaythrough', () => _onVidReady(i), { once: true });
+            // Per-video fallback: don't wait more than 8 s
+            setTimeout(() => _onVidReady(i), 8000);
+        }
+    });
+    // Global safety: always clear loader within 12 s
+    setTimeout(_dismissLoader, 12000);
 }
 
 // Global Speed Control Sub-loop Setup
@@ -217,6 +249,9 @@ function playbackRateLoop() {
 }
 requestAnimationFrame(playbackRateLoop);
 
+// Boot the loader tracker now that vid refs exist
+_initLoader();
+
 let scrollCooldown = 0;
 
 // ─── ROBUST FRAME-READY VIDEO TRANSITION ────────────────────────────────────
@@ -225,30 +260,29 @@ let scrollCooldown = 0;
 // A 300 ms safety timeout fires regardless so the UI never deadlocks.          
 // The boundary frame stays visible during the brief overlap (crossfade).        
 function seamlessTransitionTo(vidElement, anchorToHide, onReady) {
-    // Reset playhead cleanly
     vidElement.currentTime = 0.001;
 
-    // Always ensure the video layer is below boundary frame until ready
-    gsap.set(vidElement, { autoAlpha: 0 });
+    // Keep invisible (opacity only — never visibility:hidden which de-promotes GPU layer)
+    gsap.set(vidElement, { opacity: 0 });
 
     const doSwap = () => {
-        // Crossfade: video fades in, anchor fades out simultaneously
-        gsap.to(vidElement, { autoAlpha: 1, duration: 0.12, ease: 'none' });
+        // video is z-index:2, anchor is z-index:1
+        // Setting video opacity:1 INSTANTLY covers anchor — zero gap possible.
+        // Then we leisurely fade the anchor out underneath (pure cleanup).
+        gsap.set(vidElement, { opacity: 1 });
         const hideTargets = Array.isArray(anchorToHide) ? anchorToHide : [anchorToHide];
-        hideTargets.forEach(el => gsap.to(el, { autoAlpha: 0, duration: 0.08, delay: 0.04, ease: 'none' }));
+        hideTargets.forEach(el => gsap.to(el, { opacity: 0, duration: 0.15, ease: 'none' }));
         if (onReady) onReady();
     };
 
-    // Attempt to play, then wait for frame readiness
     const attemptPlay = () => {
         const p = vidElement.play();
         if (p !== undefined) p.catch(() => {});
 
-        // If video already has enough data, swap immediately next paint
         if (vidElement.readyState >= 3) {
+            // First decoded frame already in buffer — swap next paint
             requestAnimationFrame(doSwap);
         } else {
-            // Otherwise wait for canplay (first decodable frame available)
             let swapped = false;
             const onCanPlay = () => {
                 if (swapped) return;
@@ -257,13 +291,13 @@ function seamlessTransitionTo(vidElement, anchorToHide, onReady) {
                 clearTimeout(fallback);
                 requestAnimationFrame(doSwap);
             };
-            // Safety: even if canplay never fires (network stall), swap after 300 ms
+            // Safety: swap after 400 ms max regardless of network state
             const fallback = setTimeout(() => {
                 if (swapped) return;
                 swapped = true;
                 vidElement.removeEventListener('canplay', onCanPlay);
                 doSwap();
-            }, 300);
+            }, 400);
             vidElement.addEventListener('canplay', onCanPlay);
         }
     };
@@ -281,14 +315,14 @@ function advanceStep() {
 
         seamlessTransitionTo(vid1, boundS1Start);
 
-        // Named handler so we can cleanly removeEventListener
         const checkTime = () => {
             if (vid1.currentTime >= 7.5) {
                 vid1.removeEventListener('timeupdate', checkTime);
                 vid1.pause();
-                // Crossfade to boundary frame end
-                gsap.to(boundS1End, { autoAlpha: 1, duration: 0.12, ease: 'none' });
-                gsap.to(vid1, { autoAlpha: 0, duration: 0.08, delay: 0.04, ease: 'none' });
+                // Boundary frame is z-index:1, video z-index:2
+                // Show anchor first (instant), then fade video out on top
+                gsap.set(boundS1End, { opacity: 1 });
+                gsap.to(vid1, { opacity: 0, duration: 0.12, ease: 'none' });
                 gsap.to(text2, { opacity: 1, duration: 1, delay: 0.1 });
                 currentStep = 1;
                 scrollCooldown = Date.now() + 800;
@@ -307,9 +341,8 @@ function advanceStep() {
 
         const onEnded2 = () => {
             vid2.removeEventListener('ended', onEnded2);
-            // Crossfade to boundary frame end
-            gsap.to(boundS2End, { autoAlpha: 1, duration: 0.12, ease: 'none' });
-            gsap.to(vid2, { autoAlpha: 0, duration: 0.08, delay: 0.04, ease: 'none' });
+            gsap.set(boundS2End, { opacity: 1 });
+            gsap.to(vid2, { opacity: 0, duration: 0.12, ease: 'none' });
             currentStep = 2;
             scrollCooldown = Date.now() + 800;
             isAnimating = false;
@@ -330,9 +363,8 @@ function processStepBack() {
 
         const onEndedRev1 = () => {
             vid1Rev.removeEventListener('ended', onEndedRev1);
-            // Crossfade back to SEQ1-start boundary frame
-            gsap.to(boundS1Start, { autoAlpha: 1, duration: 0.12, ease: 'none' });
-            gsap.to(vid1Rev, { autoAlpha: 0, duration: 0.08, delay: 0.04, ease: 'none' });
+            gsap.set(boundS1Start, { opacity: 1 });
+            gsap.to(vid1Rev, { opacity: 0, duration: 0.12, ease: 'none' });
             gsap.to(text1, { opacity: 1, duration: 0.5, delay: 0.1 });
             currentStep = 0;
             scrollCooldown = Date.now() + 800;
@@ -349,9 +381,8 @@ function processStepBack() {
 
         const onEndedRev2 = () => {
             vid2Rev.removeEventListener('ended', onEndedRev2);
-            // Crossfade back to SEQ1-end/SEQ2-start boundary frame
-            gsap.to(boundS1End, { autoAlpha: 1, duration: 0.12, ease: 'none' });
-            gsap.to(vid2Rev, { autoAlpha: 0, duration: 0.08, delay: 0.04, ease: 'none' });
+            gsap.set(boundS1End, { opacity: 1 });
+            gsap.to(vid2Rev, { opacity: 0, duration: 0.12, ease: 'none' });
             gsap.to(text2, { opacity: 1, duration: 0.5, delay: 0.1 });
             currentStep = 1;
             scrollCooldown = Date.now() + 800;
