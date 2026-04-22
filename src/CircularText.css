@@ -1,0 +1,48 @@
+.circular-text-container {
+  width: 100%; 
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.circular-text {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  animation: spin linear infinite;
+  will-change: transform;
+}
+
+.circular-text span {
+  position: absolute;
+  display: inline-block;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 50%; /* CRITICAL: Must be exactly 50% of the container */
+  transform-origin: bottom center; /* CRITICAL: Pivots from the exact dead-center of the parent */
+  text-align: center;
+  font-size: 16px;
+  font-family: var(--font-body);
+  color: var(--primary-brown);
+  transition: all 0.5s cubic-bezier(0, 0, 0, 1);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* Hover Speedup Logic - triggered when the door emblem or the ring area is entered */
+.bg-portal-card:hover .circular-text,
+.circular-text-container:hover .circular-text {
+  animation-duration: 5s !important;
+}
+
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
